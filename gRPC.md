@@ -18,20 +18,20 @@ You’ve got services talking to each other over HTTP and JSON. It works—until
 Two things make it what it is:
 
 1. **Protocol Buffers (Protobuf)** — A schema language (`.proto` files) and a binary serialization format. You define messages and services once; tooling generates type-safe client and server code and handles encoding/decoding. The wire format is binary, not text.
-   
 2. **HTTP/2** — The transport. Multiple requests and responses can share one TCP connection (multiplexing), and both sides can stream data over the same connection.
 
 So: **contract in `.proto`, binary on the wire, HTTP/2 underneath.** It’s a full RPC stack, not “REST with a different encoding.”
 
 One server can speak to many clients in different languages; each client uses a generated stub and exchanges **Proto Request** / **Proto Response(s)** with the server. The diagram below shows that idea.
 
+---
 
 ![One gRPC server with multiple clients: Ruby and Android-Java clients, each with a gRPC stub, sending Proto Request and receiving Proto Response(s)](public/many_.png)
 
 
 *One server (e.g. C++), many clients (e.g. Ruby, Android-Java). Each client has a gRPC stub; all talk the same Proto contract.*
 
-
+---
 ### How it compares to REST (and why that matters)
 
 
@@ -43,6 +43,7 @@ One server can speak to many clients in different languages; each client uses a 
 | **Communication** | Request/response only | Unary + server streaming + client streaming + bidirectional |
 | **Browser support** | Native | Needs a proxy (e.g. gRPC-Web + Envoy) |
 
+---
 
 ### REST talks in resources; gRPC talks in methods
 
@@ -77,9 +78,7 @@ gRPC gives you RPC with strong typing, code generation, and a single contract sh
 
 gRPC is built in layers: your application code (and the generated stubs) sits on top; the gRPC framework handles the protocol, serialization, and language bindings; HTTP/2 is the transport at the bottom. The diagram below shows how a request flows from the client application to the server and back.
 
-
-![gRPC architecture: client and server applications, stubs, Protocol Buffers, and HTTP/2 transport](public/arch.png)
-
+<img src="public/arch.png" alt="gRPC architecture: client and server applications, stubs, Protocol Buffers, and HTTP/2 transport" width="560" height="500" />
 
 *Client app → Client stub → (request over network) → gRPC framework (Protobuf + HTTP/2) → Server stub → Server app. The response follows the same path back. The `.proto` file defines the contract; both stubs are generated from it.*
 
@@ -143,6 +142,7 @@ There’s really one workflow. You repeat it for every service:
 
 *One `.proto` file, one compiler, many languages. Then you implement server and client using the generated code.*
 
+---
 
 ### Writing the contract (`.proto`)
 
@@ -183,6 +183,7 @@ Use `protoc` and the gRPC plugin for your language, for example:
 
 You get generated types and stubs; you don’t hand-write serialization or HTTP/2 framing.
 
+---
 
 ### Implementing server and client
 
@@ -285,29 +286,41 @@ So gRPC isn’t “HTTP/1.1 with binary bodies”—it’s a different transport
 ## Unary, streams, and the one that isn’t REST
 
 
-gRPC supports four ways to call a method. Only the first looks like classic REST; the other three are where the protocol earns its keep. Here’s how the four patterns look in terms of who sends what:
+gRPC supports four ways to call a method. Only the first looks like classic REST; the other three are where the protocol earns its keep. Here’s how the four patterns look in terms of who sends what.
 
 
-**1. Unary** — One request, one response.
+### Unary
+
+One request, one response.
 
 ```
   Client  ────── request ──────►  Server
   Client  ◄───── response ──────  Server
 ```
 
+The client sends a single message and waits for a single response. Semantically it’s the same as a REST call: you invoke something, you get something back. This is what you use for most “call a method, get a result” APIs—lookups, mutations, anything that doesn’t need a long-lived stream. If you’re not sure, start here.
 
-**2. Server streaming** — One request, many responses.
+
+### Server streaming
+
+One request, many responses over time.
 
 ```
   Client  ────── request ──────►  Server
-  Client  ◄───── response 1 ───  Server
-  Client  ◄───── response 2 ───  Server
-  Client  ◄───── response 3 ───  Server
+  Client  ◄───── response 1 ───   Server
+  Client  ◄───── response 2 ───   Server
+  Client  ◄───── response 3 ───   Server
   ...
 ```
 
+The client sends one message; the server replies with a sequence of messages on the same RPC. The stream stays open until the server is done or the client cancels. Good when the server has a lot of data to push and the client doesn’t need to send anything else after the initial request.
 
-**3. Client streaming** — Many requests, one response.
+**Typical use:** Activity feeds, log tailing, market data feeds, “subscribe and get updates,” or any long-running read that produces multiple chunks.
+
+
+### Client streaming
+
+Many requests, one response.
 
 ```
   Client  ────── request 1 ───►  Server
@@ -317,44 +330,6 @@ gRPC supports four ways to call a method. Only the first looks like classic REST
   Client  ◄───── response ──────  Server
 ```
 
-
-**4. Bidirectional streaming** — Both sides send and receive over the same call.
-
-```
-  Client  ────── msg ─────────►  Server
-  Client  ◄───── msg ─────────  Server
-  Client  ────── msg ─────────►  Server
-  Client  ◄───── msg ─────────  Server
-  ... (independent streams both ways)
-```
-
-
-### Unary
-
-
-**One request → one response.**
-
-
-The client sends a single message and waits for a single response. Semantically it’s the same as a REST call: you invoke something, you get something back. This is what you use for most “call a method, get a result” APIs—lookups, mutations, anything that doesn’t need a long-lived stream. If you’re not sure, start here.
-
-
-### Server streaming
-
-
-**One request → many responses over time.**
-
-
-The client sends one message; the server replies with a sequence of messages on the same RPC. The stream stays open until the server is done or the client cancels. Good when the server has a lot of data to push and the client doesn’t need to send anything else after the initial request.
-
-**Typical use:** Activity feeds, log tailing, market data feeds, “subscribe and get updates,” or any long-running read that produces multiple chunks.
-
-
-### Client streaming
-
-
-**Many requests → one response.**
-
-
 The client sends a sequence of messages; the server processes them and returns a single response (often a summary or acknowledgment). The client controls the pace and can send a lot of data without waiting for per-message replies.
 
 **Typical use:** File or chunked uploads, bulk ingestion, metrics batching, or any case where you’re sending many small pieces and want one final answer.
@@ -362,9 +337,15 @@ The client sends a sequence of messages; the server processes them and returns a
 
 ### Bidirectional streaming
 
+Both sides send and receive over the same call.
 
-**Continuous stream both ways on one RPC.**
-
+```
+  Client  ────── msg ─────────►  Server
+  Client  ◄───── msg ─────────   Server
+  Client  ────── msg ─────────►  Server
+  Client  ◄───── msg ─────────   Server
+  ... (independent streams both ways)
+```
 
 Client and server can both send and receive at the same time over the same call. Neither side has to wait for the other to finish before sending the next message. REST has no built-in equivalent; you’d typically bolt on WebSockets or similar. In gRPC it’s a first-class pattern.
 
