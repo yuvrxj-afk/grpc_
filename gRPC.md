@@ -307,9 +307,9 @@ One request, many responses over time.
 
 ```
   Client  ────── request ──────►  Server
-  Client  ◄───── response 1 ───   Server
-  Client  ◄───── response 2 ───   Server
-  Client  ◄───── response 3 ───   Server
+  Client  ◄───── response 1 ───  Server
+  Client  ◄───── response 2 ───  Server
+  Client  ◄───── response 3 ───  Server
   ...
 ```
 
@@ -341,9 +341,9 @@ Both sides send and receive over the same call.
 
 ```
   Client  ────── msg ─────────►  Server
-  Client  ◄───── msg ─────────   Server
+  Client  ◄───── msg ─────────  Server
   Client  ────── msg ─────────►  Server
-  Client  ◄───── msg ─────────   Server
+  Client  ◄───── msg ─────────  Server
   ... (independent streams both ways)
 ```
 
@@ -403,7 +403,7 @@ In internal service meshes, where one user request can trigger many service-to-s
 - **Treat the `.proto` as the contract** — Version it, review changes, and document evolution rules. Never reuse or remove field numbers without a plan.
 - **Set deadlines (timeouts) on every call** — And propagate them through the call chain. Without deadlines, a stuck downstream service can leave requests hanging and exhaust resources. gRPC supports deadlines natively; use them.
 - **Use interceptors** — They’re like middleware. Put auth, logging, tracing, and error handling in interceptors so every RPC gets them without duplicating logic in each handler.
-- **Plan for failure** — Retries with backoff, circuit breakers, and clear handling of gRPC status codes. Distributed systems fail; your client and server code should expect it.
+- **Plan for failure** — Retries with backoff, circuit breakers, and clear handling of gRPC status codes (e.g. `DEADLINE_EXCEEDED`, `UNAVAILABLE`, `RESOURCE_EXHAUSTED`). Distributed systems fail; your client and server code should expect it.
 - **Secure the wire** — Use TLS. For service-to-service, mutual TLS (mTLS) is common. Use interceptors for tokens or other application-level auth.
 - **Invest in observability** — Logging, metrics, and distributed tracing. Instrument interceptors and server/client options so you can debug and monitor production.
 
@@ -426,35 +426,48 @@ gRPC rewards operational discipline. Small mistakes (e.g. no deadlines, no retri
 ---
 
 
-## REST or gRPC? A simple rule of thumb
+## REST vs GraphQL vs gRPC: when to use which
 
 
-**Prefer REST (or similar) when:**
-
-- Your API is **public** or consumed by many external partners.
-- You need **browser-native** access without a proxy or gRPC-Web.
-- The system is **small** and you want minimal tooling and human-readable debugging (e.g. inspecting JSON in a browser or with `curl`).
-- You’re doing **simple CRUD** and don’t need streaming or maximum throughput.
-
-**Prefer gRPC when:**
-
-- Communication is **internal** (service-to-service, backend-only).
-- **Latency and throughput** matter (high QPS, many internal hops).
-- You need **streaming** (server push, client stream, or bidirectional).
-- You want a **strict, typed contract** and generated code across multiple languages.
-- You’re in a **microservices or mesh** environment and can invest in schema discipline, tooling, and operations.
+No single API style is “best”—each optimizes for different trade-offs. Here’s how they differ and when to reach for which.
 
 
-### The trade you’re making
+### What each one is
+
+**REST** is an architectural style: resources identified by URLs, operations by HTTP methods (GET, POST, PUT, DELETE). Responses are usually JSON or XML. The contract is often documented (e.g. OpenAPI) but not enforced by the wire; clients and servers can drift if you’re not careful.
+
+**GraphQL** is a query language and runtime: the client sends a query describing exactly which fields it wants, and the server returns only those. One endpoint, strong typing via a schema, and built-in support for subscriptions (real-time updates). Good when different clients need different views of the same data.
+
+**gRPC** is an RPC framework: you call remote methods as if they were local. The contract is a `.proto` file; code is generated for every language. Binary (Protobuf) over HTTP/2, with unary and streaming. Optimized for service-to-service and performance.
 
 
-Choosing gRPC is a trade-off:
+### How they compare
 
-- **Performance and efficiency** over human-readable payloads and ad-hoc tooling.
-- **Strict contracts and code generation** over loose, document-driven APIs.
-- **Internal optimization** over maximum ease for arbitrary external clients.
+| Dimension | REST | GraphQL | gRPC |
+|-----------|------|---------|------|
+| **Data model** | Resource-oriented (nouns, URLs) | Query-oriented (client asks for fields) | Procedure-oriented (methods, arguments) |
+| **Wire format** | Text (JSON/XML) | Text (JSON) | Binary (Protobuf) |
+| **Contract** | Optional (docs, OpenAPI) | Required (schema) | Required (`.proto`, codegen) |
+| **Streaming** | No (needs WebSockets or SSE separately) | Yes (subscriptions) | Yes (server, client, bidirectional) |
+| **Caching** | HTTP caching (e.g. GET by URL) | Client-controlled; HTTP caching is harder | Application-level; no standard HTTP cache |
+| **Browser use** | Native | Native | Needs gRPC-Web + proxy |
+| **Best fit** | Public APIs, simple CRUD, broad compatibility | Complex data needs, mobile, one flexible API | Internal services, low latency, polyglot, streaming |
 
-It’s not “REST is bad, gRPC is good.” It’s “for internal, performance-sensitive, contract-driven communication, gRPC is often the right fit; for public or browser-first APIs, REST (or similar) usually is.”
+
+### When to pick which
+
+**REST** fits when the API is public or consumed by many external clients (partners, browser, mobile). It’s easy to try with `curl` or Postman, and HTTP caching works well for read-heavy, resource-shaped data. Use it for traditional web apps, public developer APIs, and when simplicity and tooling matter more than raw performance.
+
+**GraphQL** fits when clients have very different data needs (e.g. mobile needs fewer fields than the web) or when you have complex, nested data and want to avoid over-fetching and under-fetching. One schema, one endpoint; clients request exactly what they need. Subscriptions give you real-time updates without bolting on WebSockets. Use it for dashboards, mobile backends, and APIs where the same backend serves many different UIs.
+
+**gRPC** fits when services talk to each other inside your system and you care about latency, throughput, and strict contracts. Use it for microservices, mesh traffic, polyglot backends, and any flow that benefits from streaming (feeds, logs, real-time pipelines). Not a good default for public or browser-first APIs—use REST or GraphQL there.
+
+
+### Combining them
+
+Many systems use more than one: REST or GraphQL for the public or browser-facing API, and gRPC between internal services. The edge speaks HTTP/JSON or GraphQL; the backend services speak gRPC to each other. That way you get broad compatibility at the edge and performance and contracts where it matters most.
+
+Choosing gRPC means prioritizing performance, strict contracts, and streaming over human-readable payloads and the broadest possible client ease—a trade that makes sense inside the backend, not at the public API boundary.
 
 
 ---
